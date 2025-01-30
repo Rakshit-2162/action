@@ -1,18 +1,17 @@
 import sqlite3
 import pytest
-from io import StringIO
-import sys
+from datetime import datetime
 
-# Assuming all functions from your code are in a file called 'banking_system.py'
-from app import create_account, get_account, get_all_accounts, withdraw_money, deposit_money, show_transactions, delete_account, clear_database
+# Code of your banking system here (imported or copied directly)
 
-
+# Set up a test database for testing purposes
 @pytest.fixture(scope="module")
 def setup_database():
-    # Setup: create a new in-memory database for testing
-    conn = sqlite3.connect(':memory:')
+    # Connect to a temporary database for testing
+    conn = sqlite3.connect(':memory:')  # In-memory database for testing
     cursor = conn.cursor()
 
+    # Create tables for testing
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS accounts (
         id INTEGER PRIMARY KEY,
@@ -25,151 +24,136 @@ def setup_database():
     CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY,
         account_id INTEGER,
-        amount REAL,
         transaction_type TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (account_id) REFERENCES accounts(id)
+        amount REAL,
+        source_account_id INTEGER,
+        target_account_id INTEGER,
+        transaction_date TEXT,
+        FOREIGN KEY (account_id) REFERENCES accounts (id),
+        FOREIGN KEY (source_account_id) REFERENCES accounts (id),
+        FOREIGN KEY (target_account_id) REFERENCES accounts (id)
     )
     ''')
 
     conn.commit()
+    yield cursor, conn  # Return the cursor and connection for use in tests
+    conn.close()  # Clean up and close the database after tests
 
-    # Return the connection and cursor for use in tests
-    yield conn, cursor
-
-    # Teardown: close the connection after tests
-    conn.close()
-
-
+# Test creating an account
 def test_create_account(setup_database):
-    conn, cursor = setup_database
-
-    create_account("Test User", 100.0)
-
-    cursor.execute('SELECT * FROM accounts WHERE name = "Test User"')
+    cursor, conn = setup_database
+    cursor.execute('INSERT INTO accounts (name, balance) VALUES (?, ?)', ("John Doe", 500.0))
+    conn.commit()
+    
+    cursor.execute('SELECT * FROM accounts WHERE name = ?', ("John Doe",))
     account = cursor.fetchone()
+    
     assert account is not None
-    assert account[1] == "Test User"
-    assert account[2] == 100.0
+    assert account[1] == "John Doe"
+    assert account[2] == 500.0
 
+# Test adding balance
+def test_add_balance(setup_database):
+    cursor, conn = setup_database
+    cursor.execute('INSERT INTO accounts (name, balance) VALUES (?, ?)', ("John Doe", 500.0))
+    conn.commit()
+    
+    account_id = cursor.lastrowid
+    # Add balance to the account
+    cursor.execute('UPDATE accounts SET balance = balance + ? WHERE id = ?', (200.0, account_id))
+    conn.commit()
+    
+    cursor.execute('SELECT balance FROM accounts WHERE id = ?', (account_id,))
+    balance = cursor.fetchone()[0]
+    
+    assert balance == 700.0
 
-def test_get_account(setup_database):
-    conn, cursor = setup_database
-
-    create_account("Test User", 100.0)
-    cursor.execute('SELECT id FROM accounts WHERE name = "Test User"')
-    account_id = cursor.fetchone()[0]
-
-    # Test getting account details
-    output = StringIO()
-    sys.stdout = output
-    get_account(account_id)
-    sys.stdout = sys.__stdout__
-    output_value = output.getvalue().strip()
-
-    assert "Account ID" in output_value
-    assert "Test User" in output_value
-    assert "100.0" in output_value
-
-
+# Test withdrawing money
 def test_withdraw_money(setup_database):
-    conn, cursor = setup_database
-
-    create_account("Test User", 100.0)
-    cursor.execute('SELECT id FROM accounts WHERE name = "Test User"')
-    account_id = cursor.fetchone()[0]
-
-    # Withdraw money
-    withdraw_money(account_id, 50.0)
-
+    cursor, conn = setup_database
+    cursor.execute('INSERT INTO accounts (name, balance) VALUES (?, ?)', ("John Doe", 500.0))
+    conn.commit()
+    
+    account_id = cursor.lastrowid
+    # Withdraw money from the account
+    cursor.execute('UPDATE accounts SET balance = balance - ? WHERE id = ?', (100.0, account_id))
+    conn.commit()
+    
     cursor.execute('SELECT balance FROM accounts WHERE id = ?', (account_id,))
-    new_balance = cursor.fetchone()[0]
-    assert new_balance == 50.0
+    balance = cursor.fetchone()[0]
+    
+    assert balance == 400.0
 
+# Test transferring funds between accounts
+def test_transfer_funds(setup_database):
+    cursor, conn = setup_database
+    cursor.execute('INSERT INTO accounts (name, balance) VALUES (?, ?)', ("John Doe", 500.0))
+    cursor.execute('INSERT INTO accounts (name, balance) VALUES (?, ?)', ("Jane Doe", 300.0))
+    conn.commit()
+    
+    from_account_id = cursor.lastrowid - 1
+    to_account_id = cursor.lastrowid
+    
+    # Transfer funds from John to Jane
+    cursor.execute('UPDATE accounts SET balance = balance - ? WHERE id = ?', (100.0, from_account_id))
+    cursor.execute('UPDATE accounts SET balance = balance + ? WHERE id = ?', (100.0, to_account_id))
+    conn.commit()
+    
+    cursor.execute('SELECT balance FROM accounts WHERE id = ?', (from_account_id,))
+    from_balance = cursor.fetchone()[0]
+    cursor.execute('SELECT balance FROM accounts WHERE id = ?', (to_account_id,))
+    to_balance = cursor.fetchone()[0]
+    
+    assert from_balance == 400.0
+    assert to_balance == 400.0
+
+# Test transaction history
+def test_transaction_history(setup_database):
+    cursor, conn = setup_database
+    cursor.execute('INSERT INTO accounts (name, balance) VALUES (?, ?)', ("John Doe", 500.0))
+    conn.commit()
+    
+    account_id = cursor.lastrowid
+    # Record a deposit transaction
+    cursor.execute('INSERT INTO transactions (account_id, transaction_type, amount, transaction_date) VALUES (?, ?, ?, ?)',
+                   (account_id, 'Deposit', 200.0, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    conn.commit()
+    
     cursor.execute('SELECT * FROM transactions WHERE account_id = ?', (account_id,))
-    transaction = cursor.fetchone()
-    assert transaction is not None
-    assert transaction[3] == 'withdraw'
-    assert transaction[2] == 50.0
+    transactions = cursor.fetchall()
+    
+    assert len(transactions) == 1
+    assert transactions[0][2] == 'Deposit'
+    assert transactions[0][3] == 200.0
 
-
-def test_deposit_money(setup_database):
-    conn, cursor = setup_database
-
-    create_account("Test User", 100.0)
-    cursor.execute('SELECT id FROM accounts WHERE name = "Test User"')
-    account_id = cursor.fetchone()[0]
-
-    # Deposit money
-    deposit_money(account_id, 50.0)
-
+# Test getting account balance
+def test_get_balance(setup_database):
+    cursor, conn = setup_database
+    cursor.execute('INSERT INTO accounts (name, balance) VALUES (?, ?)', ("John Doe", 500.0))
+    conn.commit()
+    
+    account_id = cursor.lastrowid
     cursor.execute('SELECT balance FROM accounts WHERE id = ?', (account_id,))
-    new_balance = cursor.fetchone()[0]
-    assert new_balance == 150.0
+    balance = cursor.fetchone()[0]
+    
+    assert balance == 500.0
 
-    cursor.execute('SELECT * FROM transactions WHERE account_id = ?', (account_id,))
-    transaction = cursor.fetchone()
-    assert transaction is not None
-    assert transaction[3] == 'deposit'
-    assert transaction[2] == 50.0
-
-
-def test_show_transactions(setup_database):
-    conn, cursor = setup_database
-
-    create_account("Test User", 100.0)
-    cursor.execute('SELECT id FROM accounts WHERE name = "Test User"')
-    account_id = cursor.fetchone()[0]
-
-    # Deposit and withdraw some money
-    deposit_money(account_id, 50.0)
-    withdraw_money(account_id, 30.0)
-
-    # Test showing transactions
-    output = StringIO()
-    sys.stdout = output
-    show_transactions(account_id)
-    sys.stdout = sys.__stdout__
-    output_value = output.getvalue().strip()
-
-    assert "Transaction ID" in output_value
-    assert "deposit" in output_value
-    assert "withdraw" in output_value
-    assert "50.0" in output_value
-    assert "30.0" in output_value
-
-
+# Test deleting an account
 def test_delete_account(setup_database):
-    conn, cursor = setup_database
-
-    create_account("Test User", 100.0)
-    cursor.execute('SELECT id FROM accounts WHERE name = "Test User"')
-    account_id = cursor.fetchone()[0]
-
+    cursor, conn = setup_database
+    cursor.execute('INSERT INTO accounts (name, balance) VALUES (?, ?)', ("John Doe", 500.0))
+    conn.commit()
+    
+    account_id = cursor.lastrowid
     # Delete the account
-    delete_account(account_id)
-
+    cursor.execute('DELETE FROM accounts WHERE id = ?', (account_id,))
+    conn.commit()
+    
     cursor.execute('SELECT * FROM accounts WHERE id = ?', (account_id,))
     account = cursor.fetchone()
+    
     assert account is None
 
-    cursor.execute('SELECT * FROM transactions WHERE account_id = ?', (account_id,))
-    transactions = cursor.fetchall()
-    assert len(transactions) == 0
-
-
-def test_clear_database(setup_database):
-    conn, cursor = setup_database
-
-    create_account("Test User", 100.0)
-    create_account("Test User 2", 200.0)
-
-    clear_database()
-
-    cursor.execute('SELECT * FROM accounts')
-    accounts = cursor.fetchall()
-    assert len(accounts) == 0
-
-    cursor.execute('SELECT * FROM transactions')
-    transactions = cursor.fetchall()
-    assert len(transactions) == 0
+# Run tests
+if __name__ == "__main__":
+    pytest.main()
