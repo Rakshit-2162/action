@@ -4,7 +4,7 @@ from io import StringIO
 import sys
 
 # Assuming all functions from your code are in a file called 'banking_system.py'
-from banking_system import create_account, get_account, get_all_accounts, withdraw_money, deposit_money, show_transactions, delete_account, clear_database
+from app import create_account, get_account, get_all_accounts, withdraw_money, deposit_money, show_transactions, delete_account, clear_database
 
 
 @pytest.fixture(scope="module")
